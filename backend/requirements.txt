@@ -1,0 +1,10 @@
+# Backend requirements
+python-telegram-bot==21.0
+fastapi==0.95.2
+uvicorn==0.22.0
+sqlalchemy==2.0.18
+alembic==1.10.4
+pydantic==1.10.12
+python-dotenv==1.0.0
+requests==2.31.0
+PyJWT==2.8.0
