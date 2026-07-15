@@ -1,51 +1,50 @@
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+import hmac
+import hashlib
 import os
-import hmac, hashlib
-from urllib.parse import parse_qs
-import base64
-import json
+import time
 import jwt
 
-BOT_TOKEN = os.getenv('BOT_TOKEN','')
-JWT_SECRET = os.getenv('JWT_SECRET','changeme')
+SECRET_KEY = os.getenv('JWT_SECRET','devsecret')
 
-def _parse_init_data(init_data: str) -> dict:
-    # init_data is like "key1=value1&key2=value2"
-    qs = parse_qs(init_data, keep_blank_values=True)
-    # simplify
-    return {k: v[0] for k,v in qs.items()}
+app = FastAPI()
 
-def verify_telegram_init(init_data: str) -> dict|None:
-    # Verify according to Telegram docs
-    data = _parse_init_data(init_data)
-    hash_in = data.get('hash')
-    if not hash_in:
-        return None
-    data_check_arr = []
-    for k in sorted([k for k in data.keys() if k!='hash']):
-        data_check_arr.append(f"{k}={data[k]}")
-    data_check_string = "\n".join(data_check_arr)
-    secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
-    hmac_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-    if hmac_hash != hash_in:
-        return None
-    # return basic user info
-    return {
-        'id': data.get('id'),
-        'first_name': data.get('first_name'),
-        'username': data.get('username')
-    }
+class WebAppLoginIn(BaseModel):
+    init_data: str
 
-def create_jwt_for_user(user_id: str) -> str:
-    payload = {"sub": user_id}
-    token = jwt.encode(payload, JWT_SECRET, algorithm='HS256')
-    return token
+# Simplified auth functions for demonstration
 
-from fastapi import Depends, HTTPException
-
-def get_current_user(token: str):
-    # Very minimal: token is JWT itself
+def verify_telegram_init(init_data: str):
+    # Expect init_data as query-string-like 'id=...&auth_date=...&hash=...'
     try:
-        data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-        return {"user_id": data.get('sub')}
-    except Exception as e:
+        parts = dict([p.split('=') for p in init_data.split('&')])
+        hash_val = parts.pop('hash')
+        # Recreate hash with bot token
+        bot_token = os.getenv('BOT_TOKEN','')
+        data_check = '\n'.join([f"{k}={v}" for k,v in sorted(parts.items())])
+        secret = hashlib.sha256(bot_token.encode()).digest()
+        calc = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        if calc != hash_val:
+            return None
+        # Check auth_date freshness
+        if abs(time.time() - int(parts.get('auth_date',0))) > 86400:
+            return None
+        return parts
+    except Exception:
+        return None
+
+
+def create_jwt_for_user(user_id: str):
+    payload = {'sub': user_id, 'iat': int(time.time()), 'exp': int(time.time()) + 3600}
+    return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+
+
+def get_current_user(token: str = Depends()):
+    # For simplicity we accept token as query param (not ideal)
+    try:
+        data = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return data
+    except Exception:
         raise HTTPException(status_code=401, detail='invalid token')
